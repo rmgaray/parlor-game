@@ -12,6 +12,7 @@ import Kanren.LogicalBase (LogicMaybe (..))
 import Kanren.Match
 import Kanren.TH
 import Prettyprinter
+import Prelude hiding (pred)
 
 data Color = Blue | White | Black
   deriving stock (Generic, Show, Eq)
@@ -196,7 +197,7 @@ translateSentence color sentence boxes = do
     MkSentence (TheBoxWithColor c) verb -> thisBoxPredicate (verbRule verb (box c))
     MkSentence ATrueBox verb -> thisBoxPredicate (forAtLeastOne (trueBoxPredicate (verbRule verb)) allBoxes)
     MkSentence AFalseBox verb -> thisBoxPredicate (forAtLeastOne (falseBoxPredicate (verbRule verb)) allBoxes)
-    MkSentence ASilentBox verb -> thisBoxPredicate (forAtLeastOne (trueBoxPredicate (verbRule verb)) allBoxes)
+    MkSentence ASilentBox verb -> thisBoxPredicate (forAtLeastOne (silentBoxPredicate (verbRule verb)) allBoxes)
   where
     -- The box showing this sentence
     thisBox = box color
@@ -224,9 +225,58 @@ translateSentence color sentence boxes = do
       boxVeracity thisBox (Value $ LogicJust boxVer)
       p boxVer
     -- It's true if the box is true/false/silent and the predicate holds
-    trueBoxPredicate, falseBoxPredicate :: (Term Box -> NegatableGoal) -> Term Box -> NegatableGoal
-    trueBoxPredicate = _
-    falseBoxPredicate = _
+    trueBoxPredicate, falseBoxPredicate, silentBoxPredicate :: (Term Box -> NegatableGoal) -> Term Box -> NegatableGoal
+    trueBoxPredicate pred b veracity =
+      disj
+        do
+          veracity === Value True
+          boxVeracity b (inject' $ Just True)
+          pred b (Value True)
+        do
+          veracity === Value False
+          disj
+            do
+              -- either the box is false/silent
+              boxVer <- fresh
+              boxVer =/= inject' (Just True)
+              boxVeracity b boxVer
+            do
+              -- or the predicate is false
+              pred b (Value False)
+    falseBoxPredicate pred b veracity =
+      disj
+        do
+          veracity === Value True
+          boxVeracity b (inject' $ Just False)
+          pred b (Value True)
+        do
+          veracity === Value False
+          disj
+            do
+              -- either the box is true/silent
+              boxVer <- fresh
+              boxVer =/= inject' (Just False)
+              boxVeracity b boxVer
+            do
+              -- or the predicate is false
+              pred b (Value False)
+    silentBoxPredicate pred b veracity =
+      disj
+        do
+          veracity === Value True
+          boxVeracity b (inject' Nothing)
+          pred b (Value True)
+        do
+          veracity === Value False
+          disj
+            do
+              -- either the box is true/false
+              boxVer <- fresh
+              boxVer =/= inject' Nothing
+              boxVeracity b boxVer
+            do
+              -- or the predicate is false
+              pred b (Value False)
     (b1, b2, b3) = boxes
 
 -- We test the translations:
@@ -247,10 +297,10 @@ translateSentence color sentence boxes = do
 -- a constructive proof.
 -- This is equivalent to converting the whole predicate into a _NNF_ (Negated Normal Form).
 forAtLeastOne :: forall a. (a -> NegatableGoal) -> [a] -> NegatableGoal
-forAtLeastOne p as pHolds =
+forAtLeastOne p as veracity =
   disj
-    (pHolds === Value True >> disjMany (flip p pHolds <$> as))
-    (pHolds === Value False >> conjMany (flip p pHolds <$> as))
+    (veracity === Value True >> disjMany (flip p veracity <$> as))
+    (veracity === Value False >> conjMany (flip p veracity <$> as))
 
 -- We test forAtLeastOne
 -- >>> let i = inject'
