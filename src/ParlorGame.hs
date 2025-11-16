@@ -193,13 +193,13 @@ gemsRule bs =
 translateSentence :: Color -> Sentence -> LogicBoxes -> Goal ()
 translateSentence color sentence boxes = do
   case sentence of
-    MkSentence ThisBox verb -> thisBoxPredicate (verbRule verb thisBox)
-    MkSentence BoxNextToThisOne verb -> thisBoxPredicate (forAtLeastOne (verbRule verb) neighbors)
-    MkSentence BothBoxesNextToThisOne verb -> thisBoxPredicate (forAll others (verbRule verb))
-    MkSentence (TheBoxWithColor c) verb -> thisBoxPredicate (verbRule verb (box c))
-    MkSentence ATrueBox verb -> thisBoxPredicate (forAtLeastOne (trueBoxPredicate (verbRule verb)) allBoxes)
-    MkSentence AFalseBox verb -> thisBoxPredicate (forAtLeastOne (falseBoxPredicate (verbRule verb)) allBoxes)
-    MkSentence ASilentBox verb -> thisBoxPredicate (forAtLeastOne (silentBoxPredicate (verbRule verb)) allBoxes)
+    MkSentence ThisBox verb -> boxVeracityPredicate thisBox (verbRule verb thisBox)
+    MkSentence BoxNextToThisOne verb -> boxVeracityPredicate thisBox (forAtLeastOne (verbRule verb) neighbors)
+    MkSentence BothBoxesNextToThisOne verb -> boxVeracityPredicate thisBox (forAll (verbRule verb) others)
+    MkSentence (TheBoxWithColor c) verb -> boxVeracityPredicate thisBox (verbRule verb (box c))
+    MkSentence ATrueBox verb -> boxVeracityPredicate thisBox (forAtLeastOne (trueBoxPredicate (verbRule verb)) allBoxes)
+    MkSentence AFalseBox verb -> boxVeracityPredicate thisBox (forAtLeastOne (falseBoxPredicate (verbRule verb)) allBoxes)
+    MkSentence ASilentBox verb -> boxVeracityPredicate thisBox (forAtLeastOne (silentBoxPredicate (verbRule verb)) allBoxes)
   where
     -- The box showing this sentence
     thisBox = box color
@@ -220,66 +220,77 @@ translateSentence color sentence boxes = do
       White -> box <$> [Blue, Black]
       Black -> box <$> [Blue, White]
     allBoxes = [b1, b2, b3]
-    -- It's true if the veracity of the predicate matches the veracity of this box
-    thisBoxPredicate :: NegatableGoal -> Goal ()
-    thisBoxPredicate p = do
-      boxVer <- fresh
-      boxVeracity thisBox (Value $ LogicJust boxVer)
-      p boxVer
-    -- It's true if the box is true/false/silent and the predicate holds
-    trueBoxPredicate, falseBoxPredicate, silentBoxPredicate :: (Term Box -> NegatableGoal) -> Term Box -> NegatableGoal
-    trueBoxPredicate pred b veracity =
-      disj
-        do
-          veracity === Value True
-          boxVeracity b (inject' $ Just True)
-          pred b (Value True)
-        do
-          veracity === Value False
-          disj
-            do
-              -- either the box is false/silent
-              boxVer <- fresh
-              boxVer =/= inject' (Just True)
-              boxVeracity b boxVer
-            do
-              -- or the predicate is false
-              pred b (Value False)
-    falseBoxPredicate pred b veracity =
-      disj
-        do
-          veracity === Value True
-          boxVeracity b (inject' $ Just False)
-          pred b (Value True)
-        do
-          veracity === Value False
-          disj
-            do
-              -- either the box is true/silent
-              boxVer <- fresh
-              boxVer =/= inject' (Just False)
-              boxVeracity b boxVer
-            do
-              -- or the predicate is false
-              pred b (Value False)
-    silentBoxPredicate pred b veracity =
-      disj
-        do
-          veracity === Value True
-          boxVeracity b (inject' Nothing)
-          pred b (Value True)
-        do
-          veracity === Value False
-          disj
-            do
-              -- either the box is true/false
-              boxVer <- fresh
-              boxVer =/= inject' Nothing
-              boxVeracity b boxVer
-            do
-              -- or the predicate is false
-              pred b (Value False)
     (b1, b2, b3) = boxes
+
+-- It's true if the veracity of the predicate matches the veracity of the box
+boxVeracityPredicate :: Term Box -> NegatableGoal -> Goal ()
+boxVeracityPredicate b p = do
+  boxVer <- fresh
+  boxVeracity b (Value $ LogicJust boxVer)
+  p boxVer
+
+-- It's true if the box is true/false/silent and the predicate holds
+trueBoxPredicate, falseBoxPredicate, silentBoxPredicate :: (Term Box -> NegatableGoal) -> Term Box -> NegatableGoal
+trueBoxPredicate pred b veracity =
+  disj
+    do
+      veracity === Value True
+      boxVeracity b (inject' $ Just True)
+      pred b (Value True)
+    do
+      veracity === Value False
+      disj
+        do
+          -- either the box is false/silent
+          boxVer <- fresh
+          boxVer =/= inject' (Just True)
+          boxVeracity b boxVer
+        do
+          -- or the predicate is false
+          pred b (Value False)
+falseBoxPredicate pred b veracity =
+  disj
+    do
+      veracity === Value True
+      boxVeracity b (inject' $ Just False)
+      pred b (Value True)
+    do
+      veracity === Value False
+      disj
+        do
+          -- either the box is true/silent
+          boxVer <- fresh
+          boxVer =/= inject' (Just False)
+          boxVeracity b boxVer
+        do
+          -- or the predicate is false
+          pred b (Value False)
+silentBoxPredicate pred b veracity =
+  disj
+    do
+      veracity === Value True
+      boxVeracity b (inject' Nothing)
+      pred b (Value True)
+    do
+      veracity === Value False
+      disj
+        do
+          -- either the box is true/false
+          boxVer <- fresh
+          boxVer =/= inject' Nothing
+          boxVeracity b boxVer
+        do
+          -- or the predicate is false
+          pred b (Value False)
+
+translateSentence' :: Color -> Maybe Sentence -> LogicBoxes -> Goal ()
+translateSentence' c sentence' boxes@(b1, b2, b3) =
+  let getBox Blue = b1
+      getBox White = b2
+      getBox Black = b3
+   in case sentence' of
+        Just sentence -> translateSentence c sentence boxes
+        Nothing -> boxVeracity' (getBox c) Nothing
 
 -- We test the translations:
 -- ThisBox
@@ -320,11 +331,11 @@ forAtLeastOne p as veracity =
 -- >>> run $ \() -> forAtLeastOne eq3 (i <$> [3, 3, 3 :: Int]) (inject' False)
 -- []
 
-forAll :: forall a. [a] -> (a -> NegatableGoal) -> NegatableGoal
-forAll as p pHolds =
+forAll :: forall a. (a -> NegatableGoal) -> [a] -> NegatableGoal
+forAll p as veracity =
   disj
-    (pHolds === Value True >> conjMany (flip p pHolds <$> as))
-    (pHolds === Value False >> disjMany (flip p pHolds <$> as))
+    (veracity === Value True >> conjMany (flip p veracity <$> as))
+    (veracity === Value False >> disjMany (flip p veracity <$> as))
 
 -- | Generates a predicate involving the box based on the verb and the truth
 --   value of the verb.
@@ -390,17 +401,17 @@ colorRule (b1, b2, b3) = do
 gameRules :: LogicBoxes -> Goal ()
 gameRules boxes = conjMany $ ($ boxes) <$> [colorRule, gemsRule, veracityRule]
 
--- solve :: Maybe Sentence -> Maybe Sentence -> Maybe Sentence -> LogicBoxes -> Goal ()
--- solve s1 s2 s3 boxes@(b1, b2, b3) = do
---   colorRule boxes
---   gemsRule boxes
---   veracityRule boxes
---   translateSentence Blue s1 (b1, b2, b3)
---   translateSentence White s2 (b1, b2, b3)
---   translateSentence Black s3 (b1, b2, b3)
+solve :: Maybe Sentence -> Maybe Sentence -> Maybe Sentence -> LogicBoxes -> Goal ()
+solve s1 s2 s3 boxes = do
+  colorRule boxes
+  gemsRule boxes
+  veracityRule boxes
+  translateSentence' Blue s1 boxes
+  translateSentence' White s2 boxes
+  translateSentence' Black s3 boxes
 
--- solve' :: Maybe Sentence -> Maybe Sentence -> Maybe Sentence -> [LogicBoxes]
--- solve' s1 s2 s3 = run $ \boxes -> solve s1 s2 s3 boxes
+solve' :: Maybe Sentence -> Maybe Sentence -> Maybe Sentence -> [LogicBoxes]
+solve' s1 s2 s3 = run $ \boxes -> solve s1 s2 s3 boxes
 
 s11, s12, s13 :: Maybe Sentence
 s11 = Just $ MkSentence BoxNextToThisOne ContainsGems
@@ -428,108 +439,15 @@ s23 = Just $ MkSentence BoxNextToThisOne IsFalse
 --     BOX WHITE  SAYS NOTHING HAS GEMS
 --     BOX BLACK  IS FALSE     HAS NO GEMS
 
-s31, s32, s33 :: Sentence
-s31 = MkSentence AFalseBox ContainsGems
-s32 = MkSentence (TheBoxWithColor Blue) IsTrue
-s33 = MkSentence (TheBoxWithColor Blue) ContainsGems
+s31, s32, s33 :: Maybe Sentence
+s31 = Just $ MkSentence AFalseBox ContainsGems
+s32 = Just $ MkSentence (TheBoxWithColor Blue) IsTrue
+s33 = Just $ MkSentence (TheBoxWithColor Blue) ContainsGems
 
--- We try the second puzzle:
---
--- >>> prettySolutions $ run \bs@(b1, b2, b3) -> do; gameRules bs; translateSentence Blue s31 bs; translateSentence Black s33 bs; translateSentence White s32 bs
+-- We try the third puzzle:
+-- >>> prettySolutions $ solve' s31 s32 s33
 -- 1:
---     BOX BLUE   IS FALSE     HAS GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  IS TRUE      HAS NO GEMS
--- 2:
 --     BOX BLUE   IS TRUE      HAS NO GEMS
 --     BOX WHITE  IS TRUE      HAS NO GEMS
 --     BOX BLACK  IS FALSE     HAS GEMS
 --
--- But it does not work, only option 2 is a real solution. 1 is not a solution because:
---   (1) If white box is false, then blue box is false (and white box is true)
---   (2) If blue box is false, then a true box contains the gem (the white box)
---   (3) White box contains the gem and is true. But sentence on white box says that blue box contains the gems, so the white
---       box is both true and false. Contradiction.
--- Thus, the hypothesis is false (i.e: that the white box is false) and the proposed solution is actually not a solution.
---
--- To find out why, we construct the contradiction proof step by step to debug which
--- precise sentence rule of our system is not working as expected. Each sentence serves
--- to constraint the possible solutions, so we should always see a reduction in the search state.
---
--- We start with the hypothesis that we know to be false (that the white box is false).
--- >>> prettySolutions $ run \bs@(b1, b2, b3) -> do; gameRules bs; translateSentence White s32 bs; b2 `displays'` False;
--- 1:
---     BOX BLUE   SAYS NOTHING HAS GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.34> HAS NO GEMS
--- 2:
---     BOX BLUE   IS FALSE     HAS GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS NO GEMS
--- 3:
---     BOX BLUE   SAYS NOTHING HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS GEMS
---     BOX BLACK  ?ISTRUE<_.34> HAS NO GEMS
--- 4:
---     BOX BLUE   SAYS NOTHING HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.34> HAS GEMS
--- 5:
---     BOX BLUE   IS FALSE     HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS NO GEMS
--- 6:
---     BOX BLUE   IS FALSE     HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS GEMS
---
--- So far, so good. We see that box blue can only be false or silent and that for each configuration
--- the gem may be placed on any box (we did not constrain which box can contain the gem yet).
---
--- >>> prettySolutions $ run \bs@(b1, b2, b3) -> do; gameRules bs; translateSentence White s32 bs; b2 `displays'` False; translateSentence Blue s31 bs;
--- 1:
---     BOX BLUE   IS FALSE     HAS GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS NO GEMS
--- 2:
---     BOX BLUE   IS FALSE     HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS NO GEMS
--- 3:
---     BOX BLUE   IS FALSE     HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS GEMS
--- 4:
---     BOX BLUE   IS FALSE     HAS NO GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  ?ISTRUE<_.33> HAS GEMS
---
--- Options 1, 3 and 4 should from previous test (the ones saying that the blue box is silent) are gone, as expected.
--- However, we should have only 3 options remaining and there are 4. What went wrong? Well, if we squint a bit, we can
--- see that solutions 3 and 4 are actually the same one. Our sentence has introduced an already existing solution.
---
--- But this is not the source of the error. The problem is that at this stage no solutions should have the box with the
--- gems being false (see step (II)).
---
--- The error is here:
---   MkSentence AFalseBox verb -> thisBoxDisplays \b -> do
---     disjMany' b (\b box -> box `displays'` False >> verbRule verb b box) allBoxes
---
--- This reads:
---   ∃box. box is false ∧ `verbRule verb b box`
---
--- The negation should be:
---    ¬∃box. box is true ∧ `verbRule verb b box`
---   ≣ ∀box. ¬(box is true ∧ `verbRule verb b box`)
---   ≣ ∀box. (¬box is true ∨ ¬`verbRule verb b box`)
---   ≣ ∀box. box is false ∨ `verbRule verb ¬b box`
---
---
--- However, the negation should involve *ALL* true boxes, since they there is no true box such
--- that `verbRule verb b box` holds. Perhaps I should apply Morgan's laws to correct these predicates...
---
--- >>> prettySolutions $ run \bs@(b1, b2, b3) -> do; gameRules bs; translateSentence White s32 bs; b2 `displays'` False; translateSentence Blue s31 bs; translateSentence Black s33 bs;
--- 1:
---     BOX BLUE   IS FALSE     HAS GEMS
---     BOX WHITE  IS FALSE     HAS NO GEMS
---     BOX BLACK  IS TRUE      HAS NO GEMS
