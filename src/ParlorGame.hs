@@ -147,9 +147,11 @@ veracityRule bs =
     do
       disjMany $
         cycle3 bs <&> \(b1, b2, b3) -> do
-          boxVeracity' b1 (Just True)
-          boxVeracity' b2 (Just False)
-          boxVeracity' b3 (Just False)
+          (alone, together) <- fresh
+          alone =/= together
+          boxVeracity b1 (Value $ LogicJust alone)
+          boxVeracity b2 (Value $ LogicJust together)
+          boxVeracity b3 (Value $ LogicJust together)
     do
       disjMany $
         perms3 bs <&> \(b1, b2, b3) -> do
