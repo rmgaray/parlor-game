@@ -1,0 +1,3 @@
+[submodule "typedKanren"]
+	path = typedKanren
+	url = git@github.com:snejugal/typedKanren.git
